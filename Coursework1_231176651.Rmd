@@ -21,7 +21,7 @@ htmltools::img(src = knitr::image_uri("images/QMlogo.png"),
 
 # Section 1: Introduction
 ## 1.1 Lithium and the Clean Energy Transition
-Lithium has become one of the most strategically important commodities of the 21st century. As the core material in lithium-ion batteries, it underpins the global shift to clean energy by powering electric vehicles (EVs), grid-scale storage, and consumer electronics. Major trading houses have significantly increased their lithium exposure, reflecting it's growing importance in the global energy transition. 
+Lithium has become one of the most strategically important commodities of the 21st century. As the core material in lithium-ion batteries, it underpins the global shift to clean energy by powering electric vehicles (EVs), grid-scale storage, and consumer electronics. Major trading houses have significantly increased their lithium exposure, reflecting its growing importance in the global energy transition. 
 
 The price history reflects this transformation. For most of the 2010s, lithium traded in a narrow range. Between 2020 and 2022 prices rose dramatically as electric vehicle demand surged and supply struggled to keep up. From 2023 onwards prices fell sharply as new mines in Australia and South America began producing, leading to oversupply. This boom-and-bust cycle makes lithium prices a fascinating area for time series analysis.
 
@@ -92,7 +92,7 @@ plot(LithiumTS,
      lwd  = 2)
 ```
 
-As briefly mentioned in the introduction, there are a three main phases that can be seen in the historic monthly average close prices of the LIT ETF: 
+As briefly mentioned in the introduction, there are three main phases that can be seen in the historic monthly average close prices of the LIT ETF: 
 
 **1) 2010--2015 (Initial Decline):**
 Prices started around $35 before falling to a low of around $18 by 2015 as lithium demand remained weak.
@@ -150,13 +150,13 @@ Comparing the log-transformed plot to the original found in section 3.1, the 202
 Prophet is a forecasting library developed by Meta. It fits an additive model combining trend, seasonality, holidays and random noise:
 
 $$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$
+I fitted Prophet to the `LithiumMonthly` dataframe, which contains the `ds` (date) and `y` (price) columns required by the model.
 
-## 4.2 Fitting the Model
 ```{r, message=FALSE, warning=FALSE}
 ProphetModel <- prophet(LithiumMonthly)
 ```
 
-## 4.3 Creating Future Dates
+## 4.2 Creating Future Dates
 ```{r}
 FutureDates <- make_future_dataframe(ProphetModel,
                                      periods = 24,
@@ -165,23 +165,23 @@ tail(FutureDates)
 ```
 I created 24 months (2 years) of future dates beyond the last observation, as forecasting further ahead on this volatile time series would produce unreliable results.
 
-## 4.4 Generating the Forecast
+## 4.3 Generating the Forecast
 ```{r}
 ProphetForecast <- predict(ProphetModel, FutureDates)
 tail(ProphetForecast[c("ds", "yhat", "yhat_lower", "yhat_upper")])
 ```
 The columns `yhat_lower` and `yhat_upper` give the uncertainty interval around the central forecast `yhat`. By default Prophet uses an 80% uncertainty interval.
 
-## 4.5 Forecast Plot
+## 4.4 Forecast Plot
 ```{r}
 plot(ProphetModel, ProphetForecast,
      xlabel = "Year",
      ylabel = "LIT ETF Price (USD)")
 ```
 
-The forecast is shown as the blue line, within the light blue shaded region representing the 80% uncertainty interval. The forecast follows an upward trend, predicting the LIT ETF price to rise gradually from around $50 in 2026 to approximately $65 by early 2028. The uncertainty interval widens as we move further into the future, which is expected as predictions become less certain over longer time periods
+The forecast is shown as the blue line, within the light blue shaded region representing the 80% uncertainty interval. The forecast follows an upward trend, predicting the LIT ETF price to rise gradually from around $50 in 2026 to approximately $65 by early 2028. The uncertainty interval widens as we move further into the future, which is expected as predictions become less certain over longer time periods.
 
-## 4.6 Forecast Components
+## 4.5 Forecast Components
 ```{r, warning=FALSE}
 prophet_plot_components(ProphetModel, ProphetForecast)
 ```
@@ -199,7 +199,7 @@ ProphetModelNoSeason <- prophet(LithiumMonthly,
                                  weekly.seasonality = FALSE,
                                  daily.seasonality  = FALSE)
 
-FutureDatesNoSeason     <- make_future_dataframe(ProphetModelNoSeason,
+FutureDatesNoSeason <- make_future_dataframe(ProphetModelNoSeason,
                                                   periods = 24,
                                                   freq    = "month")
 ProphetForecastNoSeason <- predict(ProphetModelNoSeason,
