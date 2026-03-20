@@ -1,0 +1,236 @@
+---
+title: "MTH6139 Time Series" 
+subtitle: "Coursework 1: Time Series Analysis on Lithium Prices" 
+author: "Shyla Jadav -- 231176651" 
+date: "Spring term 2026" 
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: spacelab 
+    highlight: tango
+---
+ 
+```{r, echo=FALSE}
+# This code will display the QMUL logo at the top right of the page
+# Do not change this code
+htmltools::img(src = knitr::image_uri("images/QMlogo.png"),
+               alt = 'logo',
+               style = 'position:absolute; top:0; right:0; padding:10px; width:20%;')
+```
+
+# Section 1: Introduction
+## 1.1 Lithium and the Clean Energy Transition
+Lithium has become one of the most strategically important commodities of the 21st century. As the core material in lithium-ion batteries, it underpins the global shift to clean energy by powering electric vehicles (EVs), grid-scale storage, and consumer electronics. Major trading houses have significantly increased their lithium exposure, reflecting it's growing importance in the global energy transition. 
+
+The price history reflects this transformation. For most of the 2010s, lithium traded in a narrow range. Between 2020 and 2022 prices rose dramatically as electric vehicle demand surged and supply struggled to keep up. From 2023 onwards prices fell sharply as new mines in Australia and South America began producing, leading to oversupply. This boom-and-bust cycle makes lithium prices a fascinating area for time series analysis.
+
+## 1.2 The LIT ETF and Why I Used It
+This project analyses the Global X Lithium & Battery Tech ETF (ticker: LIT), which tracks companies across the full lithium supply chain including SQM and Panasonic. Because their revenues depend directly on lithium prices and EV demand, LIT served as a good proxy for the global lithium market.
+
+I used LIT rather than raw lithium prices as it can be fetched live from Yahoo Finance in a single line of R code, with no manual downloading or data cleaning required.
+
+I applied Meta's Prophet forecasting system to identify trends, detect turning points and produce a price forecast.
+
+# Section 2: Loading and Preparing the Data
+## 2.1 Loading Libraries
+```{r, message=FALSE, warning=FALSE}
+library(quantmod)
+library(prophet)
+library(dplyr)
+library(zoo)
+```
+
+## 2.2 Fetching LIT ETF Data from Yahoo Finance
+The `getSymbols()` function, part of the `quantmod` library, fetches historical price data for Global X Lithium & Battery Tech ETF directly from Yahoo Finance.
+```{r, message=FALSE, warning=FALSE}
+getSymbols("LIT", src = "yahoo", auto.assign = TRUE)
+head(LIT)
+```
+
+## 2.3 Aggregating to Monthly Frequency
+I aggregated daily closing prices to monthly averages in order to make a data frame that is more appropriate for trend analysis and forecasting.
+```{r}
+LithiumMonthly <- data.frame(
+  ds = index(LIT),
+  y  = as.numeric(Cl(LIT))
+) %>%
+  mutate(MonthStart = as.Date(format(ds, "%Y-%m-01"))) %>%
+  group_by(MonthStart) %>%
+  summarise(y = mean(y, na.rm = TRUE)) %>%
+  rename(ds = MonthStart)
+
+head(LithiumMonthly)
+```
+The dataset contains `r nrow(LithiumMonthly)` monthly observations, from `r min(LithiumMonthly$ds)` to `r max(LithiumMonthly$ds)`.
+
+## 2.4 Converting to a time series 
+Firstly I created a `ts` object with monthly frequency. The `start` argument is set using the year and month from the earliest date in the data.
+```{r}
+LithiumTS <- ts(LithiumMonthly$y,
+                start     = c(as.integer(format(min(LithiumMonthly$ds), "%Y")),
+                              as.integer(format(min(LithiumMonthly$ds), "%m"))),
+                frequency = 12)
+start(LithiumTS)
+end(LithiumTS)
+frequency(LithiumTS)
+```
+
+To access the times in the `ts` object I have used the function `time()`. This returned a time series with the dates. To convert this to a vector of dates I used the function `yearmon()` from the `zoo` library.
+```{r}
+head(as.yearmon(time(LithiumTS)))
+```
+
+# Section 3: Analysing the Data
+## 3.1 Time Series Plot
+```{r}
+plot(LithiumTS,
+     main = "LIT ETF Monthly Average Close Price",
+     ylab = "Price (USD)",
+     xlab = "Year",
+     col  = "blue",
+     lwd  = 2)
+```
+
+As briefly mentioned in the introduction, there are a three main phases that can be seen in the historic monthly average close prices of the LIT ETF: 
+
+**1) 2010--2015 (Initial Decline):**
+Prices started around $35 before falling to a low of around $18 by 2015 as lithium demand remained weak.
+
+**2) 2015--2022 (Recovery and Surge):**
+Prices recovered gradually before surging significantly to a peak of around $90 by late 2022, driven by the rapid growth in electric vehicle demand.
+
+**3) 2022--present (Sharp Fall and Partial Recovery):**
+Prices fell sharply from their peak mainly due to oversupply from new mines in Australia and South America, and have slowly shown signs of recovery reaching approximately $70 by early 2025.
+
+## 3.2 Multiplicative Decomposition
+To separate the trend, seasonal, and residual noise components I applied multiplicative decomposition.
+```{r}
+LithiumDecomp <- decompose(LithiumTS, type = "multiplicative")
+plot(LithiumDecomp)
+```
+
+The decomposition shows three components:
+
+- **Trend**: Clear upward movement peaking around 2022 before declining sharply. From 2024 onwards the trend appears to gradually moving upwards again
+  
+- **Seasonal**: Clear and consistent annual pattern throughout the entire series, with regular peaks and troughs repeating every year. Seasonal effect is small (between 0.98 and 1.02) compared to overall trend.
+
+- **Random**: Residual noise fluctuates around 1.0 for most of the series, with notably larger spikes during the 2021--2022 period. This suggests that extreme price movement was driven by unexpected external factors rather than trend or seasonality alone.
+
+## 3.3 Linear Trend
+To quantify the average long-term growth rate I fitted a simple linear regression model:
+```{r}
+TimeIndex   <- 1:length(LithiumTS)
+LinearModel <- lm(LithiumTS ~ TimeIndex)
+summary(LinearModel)
+```
+
+The slope of the linear model is approximately 0.189, meaning the LIT ETF price grew by around $0.19 per month on average over the full period. However the R-squared value of 0.34 indicates the linear model only explains 34% of the variation in price, confirming that a straight line is a poor fit for this data. The dramatic 2020--2022 surge and subsequent fall are clearly non-linear and cannot be captured by a simple linear trend alone, which is why Prophet is better suited for this series.
+
+## 3.4 Log Transformation
+As previously mentioned, the LIT ETF closing prices show much larger fluctuations during the 2021--2022 spike than in earlier periods, suggesting the variance is not constant over time. Hence heteroskedasticity is present.
+
+Taking the natural log can help stabilise this variance and make the data easier to model.
+```{r}
+LithiumLogTS <- log(LithiumTS)
+
+plot(LithiumLogTS,
+     main = "Log of LIT ETF Monthly Price",
+     ylab = "Log Price",
+     xlab = "Year",
+     col  = "red",
+     lwd  = 2)
+```
+
+Comparing the log-transformed plot to the original found in section 3.1, the 2021--2022 spike appears less extreme on the log scale. In the original plot prices surged from around $25 to $90, whereas on the log scale this corresponds to a move from approximately 3.2 to 4.5. This is a much smaller jump suggesting that the log transformation has partially stabilised the variance.
+
+# Section 4: Forecasting with Meta's Prophet
+## 4.1 What is Prophet?
+Prophet is a forecasting library developed by Meta. It fits an additive model combining trend, seasonality, holidays and random noise:
+
+$$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$
+
+## 4.2 Fitting the Model
+```{r, message=FALSE, warning=FALSE}
+ProphetModel <- prophet(LithiumMonthly)
+```
+
+## 4.3 Creating Future Dates
+```{r}
+FutureDates <- make_future_dataframe(ProphetModel,
+                                     periods = 24,
+                                     freq    = "month")
+tail(FutureDates)
+```
+I created 24 months (2 years) of future dates beyond the last observation, as forecasting further ahead on this volatile time series would produce unreliable results.
+
+## 4.4 Generating the Forecast
+```{r}
+ProphetForecast <- predict(ProphetModel, FutureDates)
+tail(ProphetForecast[c("ds", "yhat", "yhat_lower", "yhat_upper")])
+```
+The columns `yhat_lower` and `yhat_upper` give the uncertainty interval around the central forecast `yhat`. By default Prophet uses an 80% uncertainty interval.
+
+## 4.5 Forecast Plot
+```{r}
+plot(ProphetModel, ProphetForecast,
+     xlabel = "Year",
+     ylabel = "LIT ETF Price (USD)")
+```
+
+The forecast is shown as the blue line, within the light blue shaded region representing the 80% uncertainty interval. The forecast follows an upward trend, predicting the LIT ETF price to rise gradually from around $50 in 2026 to approximately $65 by early 2028. The uncertainty interval widens as we move further into the future, which is expected as predictions become less certain over longer time periods
+
+## 4.6 Forecast Components
+```{r, warning=FALSE}
+prophet_plot_components(ProphetModel, ProphetForecast)
+```
+
+- **Trend**: A flat period from 2010 to around 2016 is shown, followed by a steady upward movement that accelerates significantly from 2020 onwards. Prophet forecasts this upward trend to continue through to 2028.
+
+- **Yearly seasonality**: A clear seasonal pattern, with prices tending to peak around February and dip around April and December each year. Whether this seasonality meaningfully improves the forecast will be explored in the next section, where a model without seasonality is compared.
+
+# Section 5: Alternative Model Without Seasonality
+## 5.1 Reasoning
+While some mild seasonal patterns exist in lithium prices, the dominant driver is supply and demand trends. To test whether seasonality genuinely improves the forecast, I fitted a second Prophet model without seasonality.
+```{r, message=FALSE, warning=FALSE}
+ProphetModelNoSeason <- prophet(LithiumMonthly,
+                                 yearly.seasonality = FALSE,
+                                 weekly.seasonality = FALSE,
+                                 daily.seasonality  = FALSE)
+
+FutureDatesNoSeason     <- make_future_dataframe(ProphetModelNoSeason,
+                                                  periods = 24,
+                                                  freq    = "month")
+ProphetForecastNoSeason <- predict(ProphetModelNoSeason,
+                                    FutureDatesNoSeason)
+plot(ProphetModelNoSeason, ProphetForecastNoSeason,
+     xlabel = "Year",
+     ylabel = "LIT ETF Price (USD)")
+```
+
+Without seasonality, the model produces a much smoother forecast, capturing only the underlying upward trend. Compared to the original model in Section 4.5, the fitted line no longer follows the short-term fluctuations in the historical data.
+
+## 5.2 Comparing the Two Forecasts
+```{r}
+ForecastComparison <- data.frame(
+  Date            = tail(ProphetForecast$ds, 6),
+  WithSeasonality = round(tail(ProphetForecast$yhat, 6), 2),
+  NoSeasonality   = round(tail(ProphetForecastNoSeason$yhat, 6), 2)
+)
+ForecastComparison
+```
+The two forecasts are very similar, with values differing by no more than $2--3 across all six periods. This suggests that seasonality has a minimal impact on the overall forecast, and that the trend is the dominant driver of LIT ETF prices. This is consistent with the idea of lithium being a commodity shaped primarily by supply and demand cycles rather than seasonal patterns.
+
+# Section 6: Conclusions
+To conclude, this project analysed the Global X Lithium & Battery Tech ETF (LIT) as a proxy for the lithium market. The data revealed three distinct phases: an initial decline to 2015, a gradual recovery and dramatic surge peaking in 2022 driven by surging EV demand, and a sharp fall from 2023 due to oversupply from new mines in Australia and South America.
+
+Prophet forecast a gradual upward trend in LIT ETF prices over the next two years, reaching approximately $65 by early 2028. However the wide uncertainty interval highlights the difficulty of forecasting a volatile commodity time series with confidence. Comparing models with and without seasonality produced very similar results, confirming that supply and demand trends are the dominant driver of lithium prices rather than seasonal patterns.
+
+While Prophet is a powerful forecasting tool, it cannot anticipate future events such as policy changes or geopolitical disruptions. Forecast should therefore be treated as a general indication of direction rather than a precise prediction.
+
+# References
+- Global X LIT ETF: <https://www.globalxetfs.com/funds/lit/>
+- quantmod R package: <https://www.quantmod.com/>
+- Meta Prophet Documentation: <https://facebook.github.io/prophet/docs/quick_start.html#r-api>
+- Prophet R package: <https://cran.r-project.org/package=prophet>
